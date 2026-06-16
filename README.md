@@ -12,7 +12,7 @@ Visitors use the WordPress shortcode on [logicencoder.com/dynex-large-transactio
 | Optional async | `aiohttp` when installed (address-range tooling) |
 | Parallel scans | `multiprocessing` pools for lookback and address tracking |
 | Chain access | Dynex JSON-RPC (`getinfo`, block-by-height fetches on local daemon port) |
-| Persistence | SQLite `dynex_transactions.db` — large txs, send audit log, address tooling tables |
+| Persistence | SQLite local buffer — large transfers, push audit trail, address tooling |
 | WordPress handoff | Authenticated REST batch push (`X-API-Key`) to the plugin ingest endpoint |
 | Configuration | `dynex_config.ini` and/or CLI flags (`-w`, `-k`, `-n`, `-t`) |
 | Operations | Rotating file logs (`logs/`, `large_tx_logs/`, `address_logs/`), USM-managed service on operator Linux host |
@@ -22,7 +22,7 @@ Visitors use the WordPress shortcode on [logicencoder.com/dynex-large-transactio
 
 The default production loop polls the node once per second, reads the latest block height from `getinfo`, and processes each new block exactly once.
 
-For every transaction in the block, the worker parses outputs, converts raw amounts with a fixed **coin divisor** (1e9), and compares against **`LARGE_TX_THRESHOLD`**. Qualifying rows are written to SQLite with `INSERT OR IGNORE` on `tx_hash` so replays and duplicate blocks do not create double entries.
+For every transaction in the block, the worker parses outputs, converts raw amounts with a fixed **coin divisor** (1e9), and compares against **`LARGE_TX_THRESHOLD`**. Qualifying rows are written to the local SQLite buffer with hash-based deduplication so replays and duplicate blocks do not create double entries.
 
 When **auto-send** is enabled and at least one WordPress target is configured, each batch of new large transfers from that block is POSTed immediately after SQLite insert. The plugin responds with how many rows were received versus inserted; duplicates are skipped server-side.
 
@@ -30,7 +30,7 @@ Production threshold on logicencoder.com is **4998 DNX** (`threshold` in `dynex_
 
 ## WordPress multi-site push
 
-**Multi-site edition** keeps a list of `(url, api_key, site_name)` tuples. Each ingest call sends the same transaction batch to every selected site in sequence and records success or failure per site in **`wordpress_send_log`** (timestamp, site name, URL, HTTP outcome, transaction count, block number).
+**Multi-site edition** keeps a list of `(url, api_key, site_name)` tuples. Each ingest call sends the same transaction batch to every selected site in sequence and records success or failure per site in the **push audit log** (timestamp, site name, URL, HTTP outcome, transaction count, block number).
 
 Configuration paths:
 
