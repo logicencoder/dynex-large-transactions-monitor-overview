@@ -1,67 +1,90 @@
 # Dynex Large Transactions — monitor service
 
-Private Python worker for **large Dynex (DNX) on-chain transfers**. Polls a local Dynex daemon over JSON-RPC, filters transfers above a configurable threshold, stores history in SQLite, and POSTs batches to the WordPress plugin — so the public page never talks to the chain node.
+Private Python worker that watches a **local Dynex node**, classifies **large DNX transfers**, buffers them in SQLite, and **pushes batches to WordPress** so the public monitor page never opens an RPC connection.
 
-**Operator service:** `dnx_large_txs.py` (multi-site edition, production on operator infrastructure)
+Visitors use the WordPress shortcode on [logicencoder.com/dynex-large-transactions-monitor/](https://logicencoder.com/dynex-large-transactions-monitor/) — see [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview) for the live UI, stats panels, and wp-admin screens. This service is the chain-side indexer and ingest pump behind that page.
 
-**Public product (portfolio):** [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview) — [logicencoder.com/dynex-large-transactions-monitor/](https://logicencoder.com/dynex-large-transactions-monitor/)
+## Tech stack
 
-The plugin renders stats, searchable cards, pagination, and auto-refresh via **`[dynex_transactions]`**. This monitor is the chain indexer and ingest pump.
+| Layer | Technologies |
+|-------|--------------|
+| Worker | Python 3, `requests`, `sqlite3`, `configparser`, `argparse`, `colorama` |
+| Optional async | `aiohttp` when installed (address-range tooling) |
+| Parallel scans | `multiprocessing` pools for lookback and address tracking |
+| Chain access | Dynex JSON-RPC (`getinfo`, block-by-height fetches on local daemon port) |
+| Persistence | SQLite `dynex_transactions.db` — large txs, send audit log, address tooling tables |
+| WordPress handoff | Authenticated REST batch push (`X-API-Key`) to the plugin ingest endpoint |
+| Configuration | `dynex_config.ini` and/or CLI flags (`-w`, `-k`, `-n`, `-t`) |
+| Operations | Rotating file logs (`logs/`, `large_tx_logs/`, `address_logs/`), USM-managed service on operator Linux host |
+| Downstream | [dynex-large-transactions-plugin](https://github.com/logicencoder/dynex-large-transactions-plugin) — MySQL storage and `[dynex_transactions]` UI |
 
-## Chain polling
+## Real-time block monitoring
 
-Connects to local Dynex JSON-RPC (`getinfo`, `json_rpc` block fetches). Default large-tx threshold **9998 DNX** (overridable via `-t` or `dynex_config.ini` — production uses **4998 DNX**).
+The default production loop polls the node once per second, reads the latest block height from `getinfo`, and processes each new block exactly once.
 
-For each new block:
+For every transaction in the block, the worker parses outputs, converts raw amounts with a fixed **coin divisor** (1e9), and compares against **`LARGE_TX_THRESHOLD`**. Qualifying rows are written to SQLite with `INSERT OR IGNORE` on `tx_hash` so replays and duplicate blocks do not create double entries.
 
-- Parses transaction outputs and coin transfers
-- Keeps rows where amount exceeds threshold
-- Deduplicates by `tx_hash` before push
+When **auto-send** is enabled and at least one WordPress target is configured, each batch of new large transfers from that block is POSTed immediately after SQLite insert. The plugin responds with how many rows were received versus inserted; duplicates are skipped server-side.
 
-Optional **lookback** mode rescans a block range (`--lookback`, `--start-block`) with parallel chunk processing (`--cores`, `--chunk-size`).
+Production threshold on logicencoder.com is **4998 DNX** (`threshold` in `dynex_config.ini`). The script default when no config exists is **9998 DNX** — operators set the live value in INI or with `-t` / `--threshold`.
 
-## Persistence
+## WordPress multi-site push
 
-SQLite **`dynex_transactions.db`**:
+**Multi-site edition** keeps a list of `(url, api_key, site_name)` tuples. Each ingest call sends the same transaction batch to every selected site in sequence and records success or failure per site in **`wordpress_send_log`** (timestamp, site name, URL, HTTP outcome, transaction count, block number).
 
-| Table | Role |
-|-------|------|
-| `large_transactions` | Qualifying txs (timestamp, block, hash, from/to wallets, amount) |
-| `wordpress_send_log` | Per-site push audit (success, response, block, tx count) |
+Configuration paths:
 
-Separate rotating logs under `logs/`, `large_tx_logs/`, and `address_logs/`.
+- **`dynex_config.ini`** — `[WordPress]` sections (repeatable) plus `[Settings]` for `auto_send` and `threshold`
+- **CLI** — `-w` / `-k` / `-n` repeated for multiple targets; `--auto-send`, `--send-initial`, `--save-config`
 
-## WordPress integration
+The interactive menu (**option 4**) adds, lists, edits, or removes WordPress targets without hand-editing INI. **Option 6** sends a chosen slice of SQLite history (last 100, last 1000, all, or custom count) to one site or all configured sites — useful after plugin redeploy or API key rotation.
 
-Multi-site support — each target is `(url, api_key, site_name)` from `dynex_config.ini` or CLI (`-w`, `-k`, `-n`).
+Ingest uses the plugin’s authenticated transactions endpoint; the API key must match the value in wp-admin **Dynex Transactions → Settings**. Details of the HTTP contract live in the private plugin `ARCHITECTURE.md`, not duplicated here.
 
-**`POST /wp-json/dynex/v1/transactions`**
+## Historical lookback and backfill
 
-- Header: `X-API-Key` (must match plugin option `dynex_api_key`)
-- Body: `{ "transactions": [ { timestamp, block_number, tx_hash, from_wallet, to_wallet, amount } ] }`
-- Expects `{ status, received, inserted }` — duplicates skipped via `INSERT IGNORE` on the plugin side
+**Lookback mode** (`--lookback`, menu option 8) rescans a window of past blocks from a starting height. Chunk size, sleep delay between chunks, and optional multiprocessing (`--cores`, `--chunk-size`, `--use-ram-cache`) tune how aggressively the worker walks history without overloading the node.
 
-`auto_send = True` in config pushes each new large tx immediately after SQLite insert.
+Derived timestamps during lookback approximate block age from a fixed seconds-per-block estimate so WordPress receives sensible `timestamp` fields even when replaying old chain data.
 
-## CLI highlights
+**`--send-initial`** pushes recent SQLite rows to WordPress on startup — handy when the public database was empty but the local buffer already held qualifying transfers.
 
-| Flag | Purpose |
-|------|---------|
-| `-t` / `--threshold` | DNX minimum for “large” classification |
-| `--auto-send` | Push new txs to all configured WordPress sites |
-| `--auto-run` | Start monitoring without interactive menu |
-| `--send-initial` | Backfill recent SQLite rows to WordPress |
-| `--lookback N` | Rescan last N blocks |
-| `--track-address` / `--view-address` | Operator address tooling |
-| `--test-api` | Verify Dynex RPC connectivity |
+## Interactive operator menu
 
-Interactive menu supports WordPress site configuration and connection tests without editing INI by hand.
+When not started with `--auto-run` or `--no-menu`, a twenty-option terminal menu covers everything beyond the public feed:
 
-## Operator extras
+| Area | Menu options | What operators do |
+|------|----------------|-------------------|
+| **Monitor** | 1 | Start the real-time block loop |
+| **Inspect DB** | 2 | Print recent large transactions from SQLite |
+| **Import** | 3 | Parse a legacy log file into the database |
+| **WordPress** | 4–6, 5 toggle | Configure sites, flip auto-send, manual push |
+| **Config** | 7 | Persist current threshold and WordPress list to INI |
+| **History** | 8 | Interactive lookback wizard |
+| **Address tools** | 9–11 | Track, view, or CSV-export a single wallet |
+| **Directory** | 12–15 | Collect all chain addresses, stats, CSV export, balance refresh |
+| **Maintenance** | 16, 18, 19 | Miner/balance fixes (slow, fast, or customizable batches) |
+| **Diagnostics** | 17 | RPC smoke test |
 
-Beyond the public feed, the worker includes address directory collection, balance refresh, CSV export, mining-reward filtering, and log import — operator tooling that does not surface on the WordPress shortcode.
+Address tracking (options 9–10 and CLI `--track-address`) supports block ranges, mining-only vs regular filters, optional multiprocessing, RAM cache sizing, and per-chunk sleep — the same performance knobs as lookback.
 
-Private WordPress side: [dynex-large-transactions-plugin](https://github.com/logicencoder/dynex-large-transactions-plugin).
+## Logging and audit trail
+
+Three log families rotate under the worker directory:
+
+- **General trace** — block processing and RPC errors (`logs/dynex_log_*.log`)
+- **Large-transaction highlight** — one line per qualifying transfer (`large_tx_logs/`)
+- **Per-address traces** — optional deep logs when tracking wallets (`address_logs/`)
+
+Terminal output uses colour when attached to a TTY; `--show-messages` controls verbose WordPress send banners.
+
+## Headless and service deployment
+
+For systemd or Universal Service Manager deployments, operators typically run with **`--auto-run`** (and often **`--auto-send`**) so the process skips the menu and enters the block loop immediately. Configuration is read from `dynex_config.ini` beside the script.
+
+The worker assumes a **co-located Dynex daemon** reachable on the local RPC URL baked into the script. It does not expose an HTTP API of its own — WordPress is the only public consumer of indexed large transfers.
+
+Private code: [dynex-large-transactions-monitor](https://github.com/logicencoder/dynex-large-transactions-monitor) · WordPress UI [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview)
 
 See [REPOS.md](REPOS.md).
 
