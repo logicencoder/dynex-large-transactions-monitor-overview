@@ -1,5 +1,7 @@
 # Dynex Large Transactions — monitor service
 
+![Public monitor page on logicencoder.com — live stats and transaction feed powered by this indexer](monitor.png)
+
 Private Python worker that watches a **local Dynex node**, classifies **large DNX transfers**, buffers them in SQLite, and **pushes batches to WordPress** so the public monitor page never opens an RPC connection.
 
 Visitors use the WordPress shortcode on [logicencoder.com/dynex-large-transactions-monitor/](https://logicencoder.com/dynex-large-transactions-monitor/) — see [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview) for the live UI, stats panels, and wp-admin screens. This service is the chain-side indexer and ingest pump behind that page.
