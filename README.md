@@ -1,95 +1,62 @@
-# Dynex Large Transactions — monitor service
+# Dynex Large Transactions — Chain Monitor
 
 ![Public monitor page on logicencoder.com — live stats and transaction feed powered by this indexer](monitor.png)
 
-Private Python worker that watches a **local Dynex node**, classifies **large DNX transfers**, buffers them in SQLite, and **pushes batches to WordPress** so the public monitor page never opens an RPC connection.
+A chain-wide transaction feed can make significant DNX movements difficult to follow. Dynex Large Transactions keeps transfers above the operator's chosen size together, with recent activity, historical investigation and a public WordPress feed connected to the same monitoring routine.
 
-Visitors use the WordPress shortcode on [logicencoder.com/dynex-large-transactions-monitor/](https://logicencoder.com/dynex-large-transactions-monitor/) — see [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview) for the live UI, stats panels, and wp-admin screens. This service is the chain-side indexer and ingest pump behind that page.
+Explore the [published transaction monitor](https://logicencoder.com/dynex-large-transactions-monitor/) for the visitor-facing experience. The chain monitor supplies the observations and gives the operator the tools to review, retain and republish them.
 
 ## Tech stack
 
 | Layer | Technologies |
-|-------|--------------|
-| Worker | Python 3, `requests`, `sqlite3`, `configparser`, `argparse`, `colorama` |
-| Optional async | `aiohttp` when installed (address-range tooling) |
-| Parallel scans | `multiprocessing` pools for lookback and address tracking |
-| Chain access | Dynex JSON-RPC (`getinfo`, block-by-height fetches on local daemon port) |
-| Persistence | SQLite local buffer — large transfers, push audit trail, address tooling |
-| WordPress handoff | Authenticated REST batch push (`X-API-Key`) to the plugin ingest endpoint |
-| Configuration | `dynex_config.ini` and/or CLI flags (`-w`, `-k`, `-n`, `-t`) |
-| Operations | Rotating file logs (`logs/`, `large_tx_logs/`, `address_logs/`), USM-managed service on operator Linux host |
-| Downstream | [dynex-large-transactions-plugin](https://github.com/logicencoder/dynex-large-transactions-plugin) — MySQL storage and `[dynex_transactions]` UI |
+|---|---|
+| Application | Python |
+| Chain access | Dynex |
+| History and exports | SQLite, CSV |
+| Publishing | WordPress |
 
-## Real-time block monitoring
+## Focus on larger movements
 
-The default production loop polls the node once per second, reads the latest block height from `getinfo`, and processes each new block exactly once.
+A configurable threshold defines which transfers belong in the monitored feed. Qualifying observations retain their transaction references so an interesting movement can be examined beyond its summary.
 
-For every transaction in the block, the worker parses outputs, converts raw amounts with a fixed **coin divisor** (1e9), and compares against **`LARGE_TX_THRESHOLD`**. Qualifying rows are written to the local SQLite buffer with hash-based deduplication so replays and duplicate blocks do not create double entries.
+The size threshold gives the monitor a clear purpose: it narrows chain activity to a selected range without suggesting that size alone explains a transaction.
 
-When **auto-send** is enabled and at least one WordPress target is configured, each batch of new large transfers from that block is POSTed immediately after SQLite insert. The plugin responds with how many rows were received versus inserted; duplicates are skipped server-side.
+## Review current activity and history
 
-Production threshold on logicencoder.com is **4998 DNX** (`threshold` in `dynex_config.ini`). The script default when no config exists is **9998 DNX** — operators set the live value in INI or with `-t` / `--threshold`.
+The live view supports following new blocks, while historical lookback lets the operator investigate an earlier range. Retained observations make it possible to revisit an event after it has passed through the live feed.
 
-## WordPress multi-site push
+Historical catch-up and an initial publication option also help restore a website's recent context after an interruption or a publishing change.
 
-**Multi-site edition** keeps a list of `(url, api_key, site_name)` tuples. Each ingest call sends the same transaction batch to every selected site in sequence and records success or failure per site in the **push audit log** (timestamp, site name, URL, HTTP outcome, transaction count, block number).
+## Investigate an address
 
-Configuration paths:
+Address tools support reviewing a selected wallet across a chosen block range, with regular and mining-related activity available for more focused investigation. Recorded results can be inspected or exported for later review.
 
-- **`dynex_config.ini`** — `[WordPress]` sections (repeatable) plus `[Settings]` for `auto_send` and `threshold`
-- **CLI** — `-w` / `-k` / `-n` repeated for multiple targets; `--auto-send`, `--send-initial`, `--save-config`
+A wider address directory and balance-related tools support questions that begin with participants rather than the latest large transfer. They remain part of the operator's research workflow.
 
-The interactive menu (**option 4**) adds, lists, edits, or removes WordPress targets without hand-editing INI. **Option 6** sends a chosen slice of SQLite history (last 100, last 1000, all, or custom count) to one site or all configured sites — useful after plugin redeploy or API key rotation.
+## Publish to the sites that need it
 
-Ingest uses the plugin’s authenticated transactions endpoint; the API key must match the value in wp-admin **Dynex Transactions → Settings**. Details of the HTTP contract live in the private plugin `ARCHITECTURE.md`, not duplicated here.
+The same monitored activity can be delivered to several configured WordPress destinations. Automatic publication keeps the public feed supplied, while manual history publication helps when a site needs an existing slice of observations again.
 
-## Historical lookback and backfill
+Per-site outcomes let the operator distinguish a functioning chain monitor from a publishing destination that needs attention. The companion plugin handles how visitors browse the resulting feed.
 
-**Lookback mode** (`--lookback`, menu option 8) rescans a window of past blocks from a starting height. Chunk size, sleep delay between chunks, and optional multiprocessing (`--cores`, `--chunk-size`, `--use-ram-cache`) tune how aggressively the worker walks history without overloading the node.
+## Maintain the observation collection
 
-Derived timestamps during lookback approximate block age from a fixed seconds-per-block estimate so WordPress receives sensible `timestamp` fields even when replaying old chain data.
+The operator can inspect recent records, import supported older logs and maintain the address information used in research. General, large-transfer and address-focused activity records support different kinds of follow-up.
 
-**`--send-initial`** pushes recent SQLite rows to WordPress on startup — handy when the public database was empty but the local buffer already held qualifying transfers.
+These tools are useful when a question cannot be answered by the current public page alone, such as reviewing an older event or preparing a focused address export.
 
-## Interactive operator menu
+## Choose an interactive or ongoing routine
 
-When not started with `--auto-run` or `--no-menu`, a twenty-option terminal menu covers everything beyond the public feed:
+Interactive controls support preparation, inspection and occasional research. Unattended operation supports the longer-running task of keeping new observations and public pages supplied.
 
-| Area | Menu options | What operators do |
-|------|----------------|-------------------|
-| **Monitor** | 1 | Start the real-time block loop |
-| **Inspect DB** | 2 | Print recent large transactions from SQLite |
-| **Import** | 3 | Parse a legacy log file into the database |
-| **WordPress** | 4–6, 5 toggle | Configure sites, flip auto-send, manual push |
-| **Config** | 7 | Persist current threshold and WordPress list to INI |
-| **History** | 8 | Interactive lookback wizard |
-| **Address tools** | 9–11 | Track, view, or CSV-export a single wallet |
-| **Directory** | 12–15 | Collect all chain addresses, stats, CSV export, balance refresh |
-| **Maintenance** | 16, 18, 19 | Miner/balance fixes (slow, fast, or customizable batches) |
-| **Diagnostics** | 17 | RPC smoke test |
-
-Address tracking (options 9–10 and CLI `--track-address`) supports block ranges, mining-only vs regular filters, optional multiprocessing, RAM cache sizing, and per-chunk sleep — the same performance knobs as lookback.
-
-## Logging and audit trail
-
-Three log families rotate under the worker directory:
-
-- **General trace** — block processing and RPC errors (`logs/dynex_log_*.log`)
-- **Large-transaction highlight** — one line per qualifying transfer (`large_tx_logs/`)
-- **Per-address traces** — optional deep logs when tracking wallets (`address_logs/`)
-
-Terminal output uses colour when attached to a TTY; `--show-messages` controls verbose WordPress send banners.
-
-## Headless and service deployment
-
-For systemd or Universal Service Manager deployments, operators typically run with **`--auto-run`** (and often **`--auto-send`**) so the process skips the menu and enters the block loop immediately. Configuration is read from `dynex_config.ini` beside the script.
-
-The worker assumes a **co-located Dynex daemon** reachable on the local RPC URL baked into the script. It does not expose an HTTP API of its own — WordPress is the only public consumer of indexed large transfers.
-
-Private code: [dynex-large-transactions-monitor](https://github.com/logicencoder/dynex-large-transactions-monitor) · WordPress UI [dynex-large-transactions-plugin-overview](https://github.com/logicencoder/dynex-large-transactions-plugin-overview)
-
-See [REPOS.md](REPOS.md).
+The product connects those routines so a narrow live feed does not come at the expense of historical context or the ability to inspect a specific transaction later.
 
 ---
 
-**Made by [Logic Encoder](https://logicencoder.com)** · [GitHub](https://github.com/logicencoder) · [Contact](https://logicencoder.com/contact/)
+Private code: [dynex-large-transactions-plugin](https://github.com/logicencoder/dynex-large-transactions-plugin)
+
+[WordPress transaction dashboard](https://github.com/logicencoder/dynex-large-transactions-plugin-overview)
+
+See [REPOS.md](REPOS.md) for related repositories.
+
+**[Logic Encoder](https://logicencoder.com)** · [GitHub](https://github.com/logicencoder) · [Contact](https://logicencoder.com/contact/)
