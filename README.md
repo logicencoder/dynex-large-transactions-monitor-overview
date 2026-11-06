@@ -17,25 +17,25 @@ Explore the [published transaction monitor](https://logicencoder.com/dynex-large
 
 ## Focus on larger movements
 
-A configurable threshold defines which transfers belong in the monitored feed. Qualifying observations retain their transaction references so an interesting movement can be examined beyond its summary.
+A threshold defines which transfers belong in the feed. The menu offers a default of 9,998 DNX or a custom value, and the value can also be given with `-t`. Qualifying transfers keep their block, hash, sender, receiver and amount.
 
 The size threshold gives the monitor a clear purpose: it narrows chain activity to a selected range without suggesting that size alone explains a transaction.
 
 ## Review current activity and history
 
-The live view supports following new blocks, while historical lookback lets the operator investigate an earlier range. Retained observations make it possible to revisit an event after it has passed through the live feed.
+The live mode follows new blocks. A lookback processes a chosen number of earlier blocks, optionally from a given start block, in parallel chunks across several processor cores with an optional RAM cache for block data, and older log files can be imported (`--import-log`) to restore history.
 
 Historical catch-up and an initial publication option also help restore a website's recent context after an interruption or a publishing change.
 
 ## Investigate an address
 
-Address tools support reviewing a selected wallet across a chosen block range, with regular and mining-related activity available for more focused investigation. Recorded results can be inspected or exported for later review.
+An address can be tracked, its transaction history viewed for a block range and exported to CSV; a mining-only mode restricts the view to mining rewards, and an address collection pass gathers every unique address on the chain, with tools to fix miner flags and update balances.
 
 A wider address directory and balance-related tools support questions that begin with participants rather than the latest large transfer. They remain part of the operator's research workflow.
 
 ## Publish to the sites that need it
 
-The same monitored activity can be delivered to several configured WordPress destinations. Automatic publication keeps the public feed supplied, while manual history publication helps when a site needs an existing slice of observations again.
+One or several WordPress sites are configured with a URL, an access key and an optional name (`-w`, `-k`, `-n`). `--auto-send` delivers new transactions as they are found, `--send-initial` sends the transactions already in the database, and each site's result is reported separately.
 
 Per-site outcomes let the operator distinguish a functioning chain monitor from a publishing destination that needs attention. The companion plugin handles how visitors browse the resulting feed.
 
