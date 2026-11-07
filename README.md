@@ -1,6 +1,6 @@
 # Dynex Large Transactions — Chain Monitor
 
-![Public monitor page on logicencoder.com — live stats and transaction feed powered by this indexer](monitor.png)
+![Public monitor page on logicencoder.com — live stats and transaction feed powered by this indexer](dynex-large-transactions-monitor-public-page.png)
 
 A chain-wide transaction feed can make significant DNX movements difficult to follow. Dynex Large Transactions keeps transfers above the operator's chosen size together, with recent activity, historical investigation and a public WordPress feed connected to the same monitoring routine.
 
